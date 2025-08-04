@@ -1,89 +1,98 @@
 import random
 from deap import base, creator, tools
 
-def criar_toolbox_repetidores(pontos, potencias, custos_potencias):
+def criar_toolbox_repetidores(pontos, potencias, custos_potencias=None):
     N = len(pontos)
     n_pot = len(potencias)
+
     if not hasattr(creator, "FitnessCobertura"):
-        # Maximiza cobertura, MINIMIZA repetidores, MINIMIZA custo
-        creator.create("FitnessCobertura", base.Fitness, weights=(1.0, 1.0, 0.1))
+        creator.create("FitnessCobertura", base.Fitness, weights=(1.0, -1.0))
     if not hasattr(creator, "IndividualRepetidor"):
         creator.create("IndividualRepetidor", list, fitness=creator.FitnessCobertura)
 
     toolbox = base.Toolbox()
-    toolbox.register("attr_pot", random.randint, 0, n_pot-1)
+    toolbox.register("attr_pot", random.randint, 0, n_pot - 1)
     toolbox.register("individual", tools.initRepeat, creator.IndividualRepetidor, toolbox.attr_pot, N)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 
     def haversine(lat1, lon1, lat2, lon2):
         from math import radians, sin, cos, sqrt, atan2
         R = 6371.0
-        dlat = radians(lat2-lat1)
-        dlon = radians(lon2-lon1)
-        a = sin(dlat/2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon/2)**2
-        c = 2 * atan2(sqrt(a), sqrt(1-a))
+        dlat = radians(lat2 - lat1)
+        dlon = radians(lon2 - lon1)
+        a = sin(dlat / 2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2)**2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return R * c
 
     def eval_cobertura(individual):
-        cobertos = set()
-        repetidores_ativos = []
-        custo_total = 0
+        repetidores = [
+            {"idx": i, "raio": potencias[individual[i]]}
+            for i in range(N) if individual[i] > 0
+        ]
 
-        # 1. Identifique repetidores ativos
-        for i, pot_idx in enumerate(individual):
-            if pot_idx == 0:
-                continue
-            repetidores_ativos.append(i)
-            custo_total += custos_potencias[pot_idx]
+        if not repetidores:
+            return (0, 9999)
 
-        # 2. Caso não tenha repetidor ativo, já retorna fitness ruim
-        if not repetidores_ativos:
-            return (0, 0, 0)
-
-        # 3. Construa grafo de conectividade
-        adj = {i: set() for i in repetidores_ativos}
-        for i in repetidores_ativos:
-            for j in repetidores_ativos:
-                if i == j:
+        adj = {r["idx"]: set() for r in repetidores}
+        for i in repetidores:
+            for j in repetidores:
+                if i["idx"] == j["idx"]:
                     continue
-                raio_i = potencias[individual[i]]
-                raio_j = potencias[individual[j]]
-                d = haversine(pontos[i]['lat'], pontos[i]['lon'], pontos[j]['lat'], pontos[j]['lon'])
-                # Verifica se os círculos se tocam/sobrepõem
-                if d <= (raio_i + raio_j):
-                    adj[i].add(j)
-                    adj[j].add(i)
+                d = haversine(
+                    pontos[i["idx"]]['lat'], pontos[i["idx"]]['lon'],
+                    pontos[j["idx"]]['lat'], pontos[j["idx"]]['lon']
+                )
+                if d <= (i["raio"] + j["raio"]):
+                    adj[i["idx"]].add(j["idx"])
+                    adj[j["idx"]].add(i["idx"])
 
-        # 4. Verifica se o grafo é conexo (BFS/DFS)
         visitados = set()
-
-        def dfs(no):
-            for viz in adj[no]:
+        def dfs(v):
+            for viz in adj[v]:
                 if viz not in visitados:
                     visitados.add(viz)
                     dfs(viz)
 
-        start = repetidores_ativos[0]
-        visitados.add(start)
-        dfs(start)
-        conexo = (len(visitados) == len(repetidores_ativos))
+        first = repetidores[0]["idx"]
+        visitados.add(first)
+        dfs(first)
 
-        if not conexo:
-            # Penaliza fortemente: cobertura zero, custo alto (ou como quiser)
-            return (0, -len(repetidores_ativos), -custo_total)
+        if len(visitados) != len(repetidores):
+            return (0, 9999)
 
-        # 5. Calcula cobertura normalmente (como antes)
-        for i in repetidores_ativos:
-            raio = potencias[individual[i]]
+        pontos_cobertos = set()
+        for r in repetidores:
             for j, ponto in enumerate(pontos):
-                d = haversine(pontos[i]['lat'], pontos[i]['lon'], ponto['lat'], ponto['lon'])
-                if d <= raio:
-                    cobertos.add(j)
+                d = haversine(
+                    pontos[r["idx"]]['lat'], pontos[r["idx"]]['lon'],
+                    ponto['lat'], ponto['lon']
+                )
+                if d <= r["raio"]:
+                    pontos_cobertos.add(j)
 
-        return (len(cobertos), -len(repetidores_ativos), -custo_total)
+        faltando = len(pontos) - len(pontos_cobertos)
+        if faltando > 0:
+            return (len(pontos_cobertos), len(repetidores) + faltando * 1000)
+
+        redundantes = 0
+        for r in repetidores:
+            cobre_algo = False
+            for j, ponto in enumerate(pontos):
+                d = haversine(
+                    pontos[r["idx"]]['lat'], pontos[r["idx"]]['lon'],
+                    ponto['lat'], ponto['lon']
+                )
+                if d <= r["raio"]:
+                    cobre_algo = True
+                    break
+            if not cobre_algo:
+                redundantes += 1
+
+        return (len(pontos_cobertos), len(repetidores) + redundantes * 10)
 
     toolbox.register("evaluate", eval_cobertura)
     toolbox.register("mate", tools.cxTwoPoint)
-    toolbox.register("mutate", tools.mutUniformInt, low=0, up=n_pot-1, indpb=0.3)
-    toolbox.register("select", tools.selNSGA2)  # multiobjetivo: cobertura, repetidores, custo
+    toolbox.register("mutate", tools.mutUniformInt, low=0, up=n_pot - 1, indpb=0.4)
+    toolbox.register("select", tools.selNSGA2)
+
     return toolbox
