@@ -30,17 +30,17 @@ if pontos:
     st.dataframe(pontos)
 
     potencias = st.multiselect(
-        "Potências possíveis (em km)", [0, 1, 5, 10, 20, 50, 60, 70],
-        default=[0, 1, 5, 10, 20, 50, 60, 70],
+        "Potências possíveis (em km)", [10, 20, 50, 60, ],
+        default=[ 10, 20, 50, 60],
     )
 
-    custos_potencias = [0, 100, 300, 600, 1200, 4000, 5000, 6000]
+    custos_potencias = [600, 1200, 4000, 5000]
     n_gen = st.slider("Gerações", 10, 200, 60, 1)
     pop_size = st.slider("Tamanho da população", 10, 100, 30, 1)
 
     col1, col2, col3 = st.columns([1, 1, 2])
     with col3:
-        buscar = st.button("Encontrar configuração ótima", use_container_width=True)
+        buscar = st.button("Encontrar configuração ótima", use_container_width=False)
 
     if "resultados_calculados" not in st.session_state:
         st.markdown("#### Visualização dos pontos (antes da otimização)")
